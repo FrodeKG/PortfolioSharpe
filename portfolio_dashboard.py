@@ -20,93 +20,127 @@ risk_free_rate = 0.041
 # Fetch current prices
 st.subheader("📈 Current Holdings")
 
-with st.spinner("Fetching latest prices..."):
-    holdings_data = []
-    
-    for ticker, weight in zip(tickers, weights):
+# Add refresh button and caching
+if 'holdings_cached' not in st.session_state:
+    st.session_state.holdings_cached = False
+    st.session_state.holdings_data = []
+
+col1, col2 = st.columns([4, 1])
+with col2:
+    if st.button("🔄 Refresh Prices"):
+        st.session_state.holdings_cached = False
+
+if not st.session_state.holdings_cached:
+    with st.spinner("Fetching latest prices (30-60 seconds)..."):
         try:
-            stock = yf.Ticker(ticker)
-            info = stock.info
-            hist = stock.history(period="5d")
+            # Batch download all tickers at once (faster!)
+            hist_data = yf.download(tickers, period="5d", group_by='ticker', progress=False, threads=True)
             
-            if not hist.empty:
-                current_price = hist['Close'].iloc[-1]
-                
-                # Calculate change
-                if len(hist) > 1:
-                    prev_close = hist['Close'].iloc[-2]
-                    change = ((current_price - prev_close) / prev_close * 100)
-                else:
-                    change = 0
-                
-                # Get name
-                name = info.get('longName', info.get('shortName', ticker))
-                
-                # Get dividend yield if available
-                div_yield = info.get('dividendYield', 0)
-                if div_yield:
-                    div_yield = div_yield * 100  # Convert to percentage
-                
-                holdings_data.append({
-                    'Ticker': ticker,
-                    'Name': name[:30] + '...' if len(name) > 30 else name,
-                    'Weight (%)': round(weight * 100, 2),
-                    'Current Price': round(current_price, 2),
-                    'Currency': info.get('currency', 'N/A'),
-                    'Change (%)': round(change, 2),
-                    'Div Yield (%)': round(div_yield, 2) if div_yield else 0,
-                    'Type': 'Fund' if ticker.startswith('0P') else 'Stock'
-                })
-            else:
-                holdings_data.append({
-                    'Ticker': ticker,
-                    'Name': 'N/A',
-                    'Weight (%)': round(weight * 100, 2),
-                    'Current Price': 'N/A',
-                    'Currency': 'N/A',
-                    'Change (%)': 0,
-                    'Div Yield (%)': 0,
-                    'Type': 'Fund' if ticker.startswith('0P') else 'Unknown'
-                })
+            holdings_data = []
+            
+            for ticker, weight in zip(tickers, weights):
+                try:
+                    # Get historical data for this ticker
+                    if len(tickers) == 1:
+                        ticker_hist = hist_data
+                    else:
+                        ticker_hist = hist_data[ticker] if ticker in hist_data.columns.levels[0] else None
+                    
+                    if ticker_hist is not None and not ticker_hist.empty:
+                        current_price = ticker_hist['Close'].iloc[-1]
+                        
+                        # Calculate change
+                        if len(ticker_hist) > 1:
+                            prev_close = ticker_hist['Close'].iloc[-2]
+                            change = ((current_price - prev_close) / prev_close * 100)
+                        else:
+                            change = 0
+                        
+                        # Get info separately
+                        try:
+                            stock = yf.Ticker(ticker)
+                            info = stock.info
+                            name = info.get('longName', info.get('shortName', ticker))
+                            currency = info.get('currency', 'N/A')
+                            div_yield = info.get('dividendYield', 0)
+                            if div_yield:
+                                div_yield = div_yield * 100
+                        except:
+                            name = ticker
+                            currency = 'N/A'
+                            div_yield = 0
+                        
+                        holdings_data.append({
+                            'Ticker': ticker,
+                            'Name': name[:30] + '...' if len(name) > 30 else name,
+                            'Weight (%)': round(weight * 100, 2),
+                            'Current Price': round(current_price, 2),
+                            'Currency': currency,
+                            'Change (%)': round(change, 2),
+                            'Div Yield (%)': round(div_yield, 2) if div_yield else 0,
+                            'Type': 'Fund' if ticker.startswith('0P') else 'Stock'
+                        })
+                    else:
+                        holdings_data.append({
+                            'Ticker': ticker,
+                            'Name': 'Data unavailable',
+                            'Weight (%)': round(weight * 100, 2),
+                            'Current Price': 'N/A',
+                            'Currency': 'N/A',
+                            'Change (%)': 0,
+                            'Div Yield (%)': 0,
+                            'Type': 'Fund' if ticker.startswith('0P') else 'Unknown'
+                        })
+                except Exception as e:
+                    holdings_data.append({
+                        'Ticker': ticker,
+                        'Name': f'Error',
+                        'Weight (%)': round(weight * 100, 2),
+                        'Current Price': 'N/A',
+                        'Currency': 'N/A',
+                        'Change (%)': 0,
+                        'Div Yield (%)': 0,
+                        'Type': 'Fund' if ticker.startswith('0P') else 'Unknown'
+                    })
+            
+            st.session_state.holdings_data = holdings_data
+            st.session_state.holdings_cached = True
+            
         except Exception as e:
-            holdings_data.append({
-                'Ticker': ticker,
-                'Name': f'Error: {str(e)[:20]}',
-                'Weight (%)': round(weight * 100, 2),
-                'Current Price': 'N/A',
-                'Currency': 'N/A',
-                'Change (%)': 0,
-                'Div Yield (%)': 0,
-                'Type': 'Fund' if ticker.startswith('0P') else 'Unknown'
-            })
+            st.error(f"Error fetching data: {str(e)}")
+            st.info("Try clicking 'Refresh Prices' button above")
+            holdings_data = []
 
-holdings_df = pd.DataFrame(holdings_data)
+holdings_df = pd.DataFrame(st.session_state.holdings_data if st.session_state.holdings_cached else [])
 
-# Color code the Change column
-def color_change(val):
-    try:
-        color = 'green' if float(val) > 0 else 'red' if float(val) < 0 else 'gray'
-        return f'color: {color}'
-    except:
-        return ''
+if not holdings_df.empty:
+    # Color code the Change column
+    def color_change(val):
+        try:
+            color = 'green' if float(val) > 0 else 'red' if float(val) < 0 else 'gray'
+            return f'color: {color}'
+        except:
+            return ''
 
-# Display with filters
-col1, col2 = st.columns([1, 4])
-with col1:
-    filter_type = st.selectbox("Filter by type:", ["All", "Stock", "Fund"])
+    # Display with filters
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        filter_type = st.selectbox("Filter by type:", ["All", "Stock", "Fund"])
 
-if filter_type != "All":
-    filtered_df = holdings_df[holdings_df['Type'] == filter_type]
+    if filter_type != "All":
+        filtered_df = holdings_df[holdings_df['Type'] == filter_type]
+    else:
+        filtered_df = holdings_df
+
+    st.dataframe(
+        filtered_df.style.applymap(color_change, subset=['Change (%)']),
+        use_container_width=True,
+        height=400
+    )
+
+    st.caption(f"Showing {len(filtered_df)} of {len(holdings_df)} holdings")
 else:
-    filtered_df = holdings_df
-
-st.dataframe(
-    filtered_df.style.applymap(color_change, subset=['Change (%)']),
-    use_container_width=True,
-    height=400
-)
-
-st.caption(f"Showing {len(filtered_df)} of {len(holdings_df)} holdings")
+    st.warning("No data loaded. Click 'Refresh Prices' to load data.")
 
 # 1-Month Performance Tracker
 st.markdown("---")

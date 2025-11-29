@@ -142,17 +142,38 @@ if not holdings_df.empty:
 else:
     st.warning("No data loaded. Click 'Refresh Prices' to load data.")
 
-# 1-Month Performance Tracker
+# Performance Tracker with Time Period Selection
 st.markdown("---")
-st.subheader("📅 Sharp Portfolio - 1 Month Performance (Including Dividends)")
+st.subheader("📅 Sharp Portfolio - Historical Performance (Including Dividends)")
 
-with st.spinner("Calculating 1-month performance with dividends..."):
+# Time period selector
+col1, col2 = st.columns([3, 1])
+with col1:
+    time_period = st.selectbox(
+        "Select Time Period:",
+        ["1 Week", "1 Month", "3 Months", "1 Year", "5 Years"],
+        index=1  # Default to 1 Month
+    )
+
+# Map selection to days
+period_mapping = {
+    "1 Week": 10,
+    "1 Month": 35,
+    "3 Months": 100,
+    "1 Year": 380,
+    "5 Years": 1900
+}
+
+days_back = period_mapping[time_period]
+
+with st.spinner(f"Calculating {time_period.lower()} performance with dividends..."):
     try:
-        # Fetch 1 month of data
+        # Define the DESIRED start date based on selection
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=35)
+        desired_start_date = end_date - timedelta(days=days_back)
         
-        month_data = yf.download(tickers, start=start_date, end=end_date, progress=False, auto_adjust=False)
+        # Fetch data for selected period
+        month_data = yf.download(tickers, start=desired_start_date, end=end_date, progress=False, auto_adjust=False)
         
         if 'Adj Close' in month_data.columns.levels[0] if isinstance(month_data.columns, pd.MultiIndex) else True:
             prices = month_data['Adj Close'] if isinstance(month_data.columns, pd.MultiIndex) else month_data
@@ -168,156 +189,209 @@ with st.spinner("Calculating 1-month performance with dividends..."):
         
         # Get available tickers
         available_tickers = [t for t in tickers if t in prices.columns]
-        ticker_indices = [i for i, t in enumerate(tickers) if t in available_tickers]
-        adjusted_weights = np.array([weights[i] for i in ticker_indices])
-        adjusted_weights = adjusted_weights / adjusted_weights.sum()
         
-        # Calculate total return including dividends
-        total_returns_list = []
-        dividends_paid = {}
-        
-        for ticker in available_tickers:
-            try:
-                stock = yf.Ticker(ticker)
-                # Get dividends in the period
-                divs = stock.dividends
-                divs_in_period = divs[(divs.index >= start_date) & (divs.index <= end_date)]
-                
-                # Calculate price returns
-                price_returns = prices[ticker].pct_change().fillna(0)
-                
-                # Add dividend returns on dividend dates
-                total_returns = price_returns.copy()
-                for div_date, div_amount in divs_in_period.items():
-                    # Find closest trading day
-                    closest_date = prices.index[prices.index.get_indexer([div_date], method='nearest')[0]]
-                    if closest_date in total_returns.index:
-                        price_on_div = prices[ticker].loc[closest_date]
-                        div_return = div_amount / price_on_div if price_on_div > 0 else 0
-                        total_returns.loc[closest_date] += div_return
-                        
-                        if ticker not in dividends_paid:
-                            dividends_paid[ticker] = 0
-                        dividends_paid[ticker] += div_amount
-                
-                total_returns_list.append(total_returns)
-            except:
-                # Fallback to price returns only
-                price_returns = prices[ticker].pct_change().fillna(0)
-                total_returns_list.append(price_returns)
-        
-        # Combine all returns
-        returns_df = pd.concat(total_returns_list, axis=1, join='inner')
-        returns_df.columns = available_tickers
-        
-        # Calculate portfolio returns
-        portfolio_daily_returns = (returns_df * adjusted_weights).sum(axis=1)
-        
-        # Calculate portfolio value
-        portfolio_value = initial_investment * (1 + portfolio_daily_returns).cumprod()
-        
-        # Current value and return
-        current_value = portfolio_value.iloc[-1]
-        total_return = ((current_value - initial_investment) / initial_investment) * 100
-        
-        # Calculate total dividends received
-        total_dividends = sum([dividends_paid.get(t, 0) * adjusted_weights[i] * initial_investment / prices[t].iloc[0] 
-                              for i, t in enumerate(available_tickers)])
-        
-        # Display metrics
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Initial Investment", f"${initial_investment:,.0f}")
-        with col2:
-            st.metric("Current Value", f"${current_value:,.2f}", f"{total_return:+.2f}%")
-        with col3:
-            gain_loss = current_value - initial_investment
-            st.metric("Gain/Loss", f"${gain_loss:+,.2f}")
-        with col4:
-            st.metric("Dividends Received", f"${total_dividends:,.2f}", 
-                     f"{len(dividends_paid)} stocks" if dividends_paid else "None")
-        
-        # Show which stocks paid dividends
-        if dividends_paid:
-            with st.expander("💰 Dividend Details"):
-                div_details = []
-                for ticker, div_amt in dividends_paid.items():
-                    idx = available_tickers.index(ticker)
-                    weight = adjusted_weights[idx]
-                    initial_price = prices[ticker].iloc[0]
-                    shares = (initial_investment * weight) / initial_price
-                    total_div = div_amt * shares
-                    div_details.append({
-                        'Ticker': ticker,
-                        'Dividend per Share': f"${div_amt:.4f}",
-                        'Est. Shares': f"{shares:.2f}",
-                        'Total Dividend': f"${total_div:.2f}"
-                    })
-                st.dataframe(pd.DataFrame(div_details), use_container_width=True)
-        
-        # Create tabs for graph and table
-        tab1, tab2 = st.tabs(["📈 Graph", "📊 Table"])
-        
-        with tab1:
+        if len(available_tickers) == 0:
+            st.warning(f"⚠️ No data available for {time_period}. Portfolio may not have existed during this period.")
+            
+            # Show empty graph with date range
             fig = go.Figure()
-            
             fig.add_trace(go.Scatter(
-                x=portfolio_value.index,
-                y=portfolio_value.values,
+                x=[desired_start_date, end_date],
+                y=[initial_investment, initial_investment],
                 mode='lines',
-                name='Sharp Portfolio (incl. dividends)',
-                line=dict(color='blue', width=2),
-                fill='tonexty',
-                fillcolor='rgba(0,100,255,0.1)'
+                line=dict(color='lightgray', dash='dash'),
+                name='No Data'
             ))
-            
-            fig.add_hline(
-                y=initial_investment,
-                line_dash="dash",
-                line_color="gray",
-                annotation_text="Initial Investment",
-                annotation_position="right"
-            )
-            
             fig.update_layout(
-                title="Sharp Portfolio Value Over Last Month (Including Dividends)",
+                title=f"Sharp Portfolio Value - {time_period} (No Data Available)",
                 xaxis_title="Date",
                 yaxis_title="Portfolio Value ($)",
-                hovermode='x unified',
                 height=500
             )
-            
             st.plotly_chart(fig, use_container_width=True)
-        
-        with tab2:
-            performance_table = pd.DataFrame({
-                'Date': portfolio_value.index.strftime('%Y-%m-%d'),
-                'Portfolio Value ($)': portfolio_value.values.round(2),
-                'Daily Return (%)': (portfolio_daily_returns * 100).values.round(2),
-                'Total Return (%)': (((portfolio_value.values / initial_investment) - 1) * 100).round(2)
-            })
             
-            performance_table = performance_table.iloc[::-1].reset_index(drop=True)
+        else:
+            # Get actual data start date
+            actual_start_date = prices.index[0]
             
-            st.dataframe(
-                performance_table.style.applymap(
-                    lambda x: 'color: green' if isinstance(x, (int, float)) and x > 0 else ('color: red' if isinstance(x, (int, float)) and x < 0 else ''),
-                    subset=['Daily Return (%)', 'Total Return (%)']
-                ),
-                use_container_width=True,
-                height=400
-            )
+            ticker_indices = [i for i, t in enumerate(tickers) if t in available_tickers]
+            adjusted_weights = np.array([weights[i] for i in ticker_indices])
+            adjusted_weights = adjusted_weights / adjusted_weights.sum()
             
-            csv = performance_table.to_csv(index=False)
-            st.download_button(
-                label="📥 Download as CSV",
-                data=csv,
-                file_name=f"sharp_portfolio_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv"
-            )
+            # Calculate total return including dividends
+            total_returns_list = []
+            dividends_paid = {}
+            
+            for ticker in available_tickers:
+                try:
+                    stock = yf.Ticker(ticker)
+                    divs = stock.dividends
+                    divs_in_period = divs[(divs.index >= desired_start_date) & (divs.index <= end_date)]
+                    
+                    price_returns = prices[ticker].pct_change().fillna(0)
+                    total_returns = price_returns.copy()
+                    
+                    for div_date, div_amount in divs_in_period.items():
+                        closest_date = prices.index[prices.index.get_indexer([div_date], method='nearest')[0]]
+                        if closest_date in total_returns.index:
+                            price_on_div = prices[ticker].loc[closest_date]
+                            div_return = div_amount / price_on_div if price_on_div > 0 else 0
+                            total_returns.loc[closest_date] += div_return
+                            
+                            if ticker not in dividends_paid:
+                                dividends_paid[ticker] = 0
+                            dividends_paid[ticker] += div_amount
+                    
+                    total_returns_list.append(total_returns)
+                except:
+                    price_returns = prices[ticker].pct_change().fillna(0)
+                    total_returns_list.append(price_returns)
+            
+            returns_df = pd.concat(total_returns_list, axis=1, join='inner')
+            returns_df.columns = available_tickers
+            
+            portfolio_daily_returns = (returns_df * adjusted_weights).sum(axis=1)
+            portfolio_value = initial_investment * (1 + portfolio_daily_returns).cumprod()
+            
+            # CREATE FULL TIME RANGE WITH ZEROS BEFORE DATA
+            if actual_start_date > desired_start_date:
+                # Create date range from desired start to actual start
+                missing_dates = pd.date_range(start=desired_start_date, end=actual_start_date - timedelta(days=1), freq='D')
+                
+                # Create a series with initial investment value for missing dates
+                missing_values = pd.Series(initial_investment, index=missing_dates)
+                
+                # Combine with actual portfolio values
+                full_portfolio_value = pd.concat([missing_values, portfolio_value])
+            else:
+                full_portfolio_value = portfolio_value
+            
+            # Current value and return
+            current_value = portfolio_value.iloc[-1]
+            total_return = ((current_value - initial_investment) / initial_investment) * 100
+            
+            # Calculate total dividends
+            total_dividends = sum([dividends_paid.get(t, 0) * adjusted_weights[i] * initial_investment / prices[t].iloc[0] 
+                                  for i, t in enumerate(available_tickers) if t in dividends_paid])
+            
+            # Display metrics
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Initial Investment", f"${initial_investment:,.0f}")
+            with col2:
+                st.metric("Current Value", f"${current_value:,.2f}", f"{total_return:+.2f}%")
+            with col3:
+                gain_loss = current_value - initial_investment
+                st.metric("Gain/Loss", f"${gain_loss:+,.2f}")
+            with col4:
+                st.metric("Dividends Received", f"${total_dividends:,.2f}", 
+                         f"{len(dividends_paid)} stocks" if dividends_paid else "None")
+            
+            # Show data availability info
+            if actual_start_date > desired_start_date:
+                st.info(f"ℹ️ Data available from {actual_start_date.strftime('%Y-%m-%d')}. Showing {time_period} view with no activity before this date.")
+            else:
+                st.caption(f"Period: {full_portfolio_value.index[0].strftime('%Y-%m-%d')} to {full_portfolio_value.index[-1].strftime('%Y-%m-%d')} ({len(portfolio_value)} trading days)")
+            
+            # Show dividend details
+            if dividends_paid:
+                with st.expander("💰 Dividend Details"):
+                    div_details = []
+                    for ticker, div_amt in dividends_paid.items():
+                        idx = available_tickers.index(ticker)
+                        weight = adjusted_weights[idx]
+                        initial_price = prices[ticker].iloc[0]
+                        shares = (initial_investment * weight) / initial_price
+                        total_div = div_amt * shares
+                        div_details.append({
+                            'Ticker': ticker,
+                            'Dividend per Share': f"${div_amt:.4f}",
+                            'Est. Shares': f"{shares:.2f}",
+                            'Total Dividend': f"${total_div:.2f}"
+                        })
+                    st.dataframe(pd.DataFrame(div_details), use_container_width=True)
+            
+            # Create tabs
+            tab1, tab2 = st.tabs(["📈 Graph", "📊 Table"])
+            
+            with tab1:
+                fig = go.Figure()
+                
+                # If there's missing data at the start, show it differently
+                if actual_start_date > desired_start_date:
+                    # Show flat line for period before data
+                    missing_dates = pd.date_range(start=desired_start_date, end=actual_start_date - timedelta(days=1), freq='D')
+                    fig.add_trace(go.Scatter(
+                        x=missing_dates,
+                        y=[initial_investment] * len(missing_dates),
+                        mode='lines',
+                        name='No Data (Initial Investment)',
+                        line=dict(color='lightgray', dash='dash', width=2),
+                        hovertemplate='Date: %{x}<br>Value: $%{y:,.2f}<br>(No trading data)<extra></extra>'
+                    ))
+                
+                # Show actual portfolio performance
+                fig.add_trace(go.Scatter(
+                    x=portfolio_value.index,
+                    y=portfolio_value.values,
+                    mode='lines',
+                    name='Sharp Portfolio (incl. dividends)',
+                    line=dict(color='blue', width=2),
+                    fill='tonexty',
+                    fillcolor='rgba(0,100,255,0.1)',
+                    hovertemplate='Date: %{x}<br>Value: $%{y:,.2f}<extra></extra>'
+                ))
+                
+                fig.add_hline(
+                    y=initial_investment,
+                    line_dash="dot",
+                    line_color="gray",
+                    annotation_text="Initial Investment",
+                    annotation_position="right"
+                )
+                
+                fig.update_layout(
+                    title=f"Sharp Portfolio Value - {time_period} (Including Dividends)",
+                    xaxis_title="Date",
+                    yaxis_title="Portfolio Value ($)",
+                    hovermode='x unified',
+                    height=500,
+                    xaxis=dict(
+                        range=[desired_start_date, end_date]
+                    )
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with tab2:
+                performance_table = pd.DataFrame({
+                    'Date': portfolio_value.index.strftime('%Y-%m-%d'),
+                    'Portfolio Value ($)': portfolio_value.values.round(2),
+                    'Daily Return (%)': (portfolio_daily_returns * 100).values.round(2),
+                    'Total Return (%)': (((portfolio_value.values / initial_investment) - 1) * 100).round(2)
+                })
+                
+                performance_table = performance_table.iloc[::-1].reset_index(drop=True)
+                
+                st.dataframe(
+                    performance_table.style.applymap(
+                        lambda x: 'color: green' if isinstance(x, (int, float)) and x > 0 else ('color: red' if isinstance(x, (int, float)) and x < 0 else ''),
+                        subset=['Daily Return (%)', 'Total Return (%)']
+                    ),
+                    use_container_width=True,
+                    height=400
+                )
+                
+                csv = performance_table.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download as CSV",
+                    data=csv,
+                    file_name=f"sharp_portfolio_{time_period.replace(' ', '_').lower()}_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv"
+                )
         
     except Exception as e:
-        st.error(f"Error calculating 1-month performance: {str(e)}")
+        st.error(f"Error calculating {time_period.lower()} performance: {str(e)}")
         import traceback
         st.code(traceback.format_exc())
 

@@ -211,7 +211,7 @@ with st.spinner(f"Calculating {time_period.lower()} performance with dividends..
             st.plotly_chart(fig, use_container_width=True)
             
         else:
-            # Get actual data start date
+            # Get actual data start date (portfolio start date)
             actual_start_date = prices.index[0]
             
             ticker_indices = [i for i, t in enumerate(tickers) if t in available_tickers]
@@ -253,19 +253,6 @@ with st.spinner(f"Calculating {time_period.lower()} performance with dividends..
             portfolio_daily_returns = (returns_df * adjusted_weights).sum(axis=1)
             portfolio_value = initial_investment * (1 + portfolio_daily_returns).cumprod()
             
-            # CREATE FULL TIME RANGE WITH ZEROS BEFORE DATA
-            if actual_start_date > desired_start_date:
-                # Create date range from desired start to actual start
-                missing_dates = pd.date_range(start=desired_start_date, end=actual_start_date - timedelta(days=1), freq='D')
-                
-                # Create a series with initial investment value for missing dates
-                missing_values = pd.Series(initial_investment, index=missing_dates)
-                
-                # Combine with actual portfolio values
-                full_portfolio_value = pd.concat([missing_values, portfolio_value])
-            else:
-                full_portfolio_value = portfolio_value
-            
             # Current value and return
             current_value = portfolio_value.iloc[-1]
             total_return = ((current_value - initial_investment) / initial_investment) * 100
@@ -289,9 +276,10 @@ with st.spinner(f"Calculating {time_period.lower()} performance with dividends..
             
             # Show data availability info
             if actual_start_date > desired_start_date:
-                st.info(f"ℹ️ Data available from {actual_start_date.strftime('%Y-%m-%d')}. Showing {time_period} view with no activity before this date.")
+                days_diff = (actual_start_date - desired_start_date).days
+                st.info(f"ℹ️ Portfolio started on {actual_start_date.strftime('%Y-%m-%d')}. Showing {time_period} view with {days_diff} days before portfolio inception.")
             else:
-                st.caption(f"Period: {full_portfolio_value.index[0].strftime('%Y-%m-%d')} to {full_portfolio_value.index[-1].strftime('%Y-%m-%d')} ({len(portfolio_value)} trading days)")
+                st.caption(f"Period: {actual_start_date.strftime('%Y-%m-%d')} to {portfolio_value.index[-1].strftime('%Y-%m-%d')} ({len(portfolio_value)} trading days)")
             
             # Show dividend details
             if dividends_paid:
@@ -317,38 +305,61 @@ with st.spinner(f"Calculating {time_period.lower()} performance with dividends..
             with tab1:
                 fig = go.Figure()
                 
-                # If there's missing data at the start, show it differently
+                # If portfolio started after desired start date, show gray line for empty period
                 if actual_start_date > desired_start_date:
-                    # Show flat line for period before data
-                    missing_dates = pd.date_range(start=desired_start_date, end=actual_start_date - timedelta(days=1), freq='D')
+                    # Create date range for empty period (business days only)
+                    empty_dates = pd.date_range(start=desired_start_date, end=actual_start_date - timedelta(days=1), freq='D')
+                    
                     fig.add_trace(go.Scatter(
-                        x=missing_dates,
-                        y=[initial_investment] * len(missing_dates),
+                        x=empty_dates,
+                        y=[initial_investment] * len(empty_dates),
                         mode='lines',
-                        name='No Data (Initial Investment)',
-                        line=dict(color='lightgray', dash='dash', width=2),
-                        hovertemplate='Date: %{x}<br>Value: $%{y:,.2f}<br>(No trading data)<extra></extra>'
+                        name='Before Portfolio Start',
+                        line=dict(color='lightgray', dash='dash', width=1.5),
+                        hovertemplate='Date: %{x}<br>Value: $%{y:,.2f}<br>(Portfolio not yet started)<extra></extra>'
                     ))
                 
-                # Show actual portfolio performance
+                # Show actual portfolio performance from start date
                 fig.add_trace(go.Scatter(
                     x=portfolio_value.index,
                     y=portfolio_value.values,
                     mode='lines',
-                    name='Sharp Portfolio (incl. dividends)',
-                    line=dict(color='blue', width=2),
+                    name='Sharp Portfolio',
+                    line=dict(color='#1f77b4', width=2.5),
                     fill='tonexty',
-                    fillcolor='rgba(0,100,255,0.1)',
+                    fillcolor='rgba(31, 119, 180, 0.1)',
                     hovertemplate='Date: %{x}<br>Value: $%{y:,.2f}<extra></extra>'
                 ))
                 
+                # Add horizontal line at initial investment
                 fig.add_hline(
                     y=initial_investment,
                     line_dash="dot",
                     line_color="gray",
+                    line_width=1,
                     annotation_text="Initial Investment",
-                    annotation_position="right"
+                    annotation_position="right",
+                    annotation=dict(font_size=10)
                 )
+                
+                # Add annotation for portfolio start date (small and subtle)
+                if actual_start_date > desired_start_date:
+                    fig.add_annotation(
+                        x=actual_start_date,
+                        y=initial_investment,
+                        text=f"Portfolio started<br>{actual_start_date.strftime('%Y-%m-%d')}",
+                        showarrow=True,
+                        arrowhead=2,
+                        arrowsize=1,
+                        arrowwidth=1,
+                        arrowcolor="gray",
+                        ax=40,
+                        ay=-40,
+                        font=dict(size=9, color="gray"),
+                        bgcolor="rgba(255, 255, 255, 0.8)",
+                        bordercolor="gray",
+                        borderwidth=1
+                    )
                 
                 fig.update_layout(
                     title=f"Sharp Portfolio Value - {time_period} (Including Dividends)",
@@ -358,12 +369,20 @@ with st.spinner(f"Calculating {time_period.lower()} performance with dividends..
                     height=500,
                     xaxis=dict(
                         range=[desired_start_date, end_date]
+                    ),
+                    showlegend=True,
+                    legend=dict(
+                        yanchor="top",
+                        y=0.99,
+                        xanchor="left",
+                        x=0.01
                     )
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)
             
             with tab2:
+                # Table only shows data from portfolio start date onwards
                 performance_table = pd.DataFrame({
                     'Date': portfolio_value.index.strftime('%Y-%m-%d'),
                     'Portfolio Value ($)': portfolio_value.values.round(2),

@@ -305,28 +305,15 @@ with st.spinner(f"Calculating {time_period.lower()} performance with dividends..
             with tab1:
                 fig = go.Figure()
                 
-                # If portfolio started after desired start date, show gray line for empty period
-                if actual_start_date > desired_start_date:
-                    # Create date range for empty period (business days only)
-                    empty_dates = pd.date_range(start=desired_start_date, end=actual_start_date - timedelta(days=1), freq='D')
-                    
-                    fig.add_trace(go.Scatter(
-                        x=empty_dates,
-                        y=[initial_investment] * len(empty_dates),
-                        mode='lines',
-                        name='Before Portfolio Start',
-                        line=dict(color='lightgray', dash='dash', width=1.5),
-                        hovertemplate='Date: %{x}<br>Value: $%{y:,.2f}<br>(Portfolio not yet started)<extra></extra>'
-                    ))
-                
-                # Show actual portfolio performance from start date
+                # Show ONLY actual portfolio performance from start date
+                # No line before portfolio inception - just empty space
                 fig.add_trace(go.Scatter(
                     x=portfolio_value.index,
                     y=portfolio_value.values,
                     mode='lines',
                     name='Sharp Portfolio',
                     line=dict(color='#1f77b4', width=2.5),
-                    fill='tonexty',
+                    fill='tozeroy',
                     fillcolor='rgba(31, 119, 180, 0.1)',
                     hovertemplate='Date: %{x}<br>Value: $%{y:,.2f}<extra></extra>'
                 ))
@@ -342,25 +329,6 @@ with st.spinner(f"Calculating {time_period.lower()} performance with dividends..
                     annotation=dict(font_size=10)
                 )
                 
-                # Add annotation for portfolio start date (small and subtle)
-                if actual_start_date > desired_start_date:
-                    fig.add_annotation(
-                        x=actual_start_date,
-                        y=initial_investment,
-                        text=f"Portfolio started<br>{actual_start_date.strftime('%Y-%m-%d')}",
-                        showarrow=True,
-                        arrowhead=2,
-                        arrowsize=1,
-                        arrowwidth=1,
-                        arrowcolor="gray",
-                        ax=40,
-                        ay=-40,
-                        font=dict(size=9, color="gray"),
-                        bgcolor="rgba(255, 255, 255, 0.8)",
-                        bordercolor="gray",
-                        borderwidth=1
-                    )
-                
                 fig.update_layout(
                     title=f"Sharp Portfolio Value - {time_period} (Including Dividends)",
                     xaxis_title="Date",
@@ -368,7 +336,11 @@ with st.spinner(f"Calculating {time_period.lower()} performance with dividends..
                     hovermode='x unified',
                     height=500,
                     xaxis=dict(
-                        range=[desired_start_date, end_date]
+                        range=[desired_start_date, end_date],
+                        showgrid=True
+                    ),
+                    yaxis=dict(
+                        showgrid=True
                     ),
                     showlegend=True,
                     legend=dict(
@@ -376,7 +348,8 @@ with st.spinner(f"Calculating {time_period.lower()} performance with dividends..
                         y=0.99,
                         xanchor="left",
                         x=0.01
-                    )
+                    ),
+                    plot_bgcolor='white'
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)

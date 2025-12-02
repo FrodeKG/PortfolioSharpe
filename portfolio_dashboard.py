@@ -17,6 +17,9 @@ tickers = ['FABG.ST','CAST.ST','BETS-B.ST','FFARM.AS','IVSO.ST','SGHC','BAHN-B.S
 weights = [0.1296, 0.1775, 0.0352, 0.0167, 0.0303, 0.0093, 0.0058, 0.0609, 0.0371, 0.0487, 0.0286, 0.0243, 0.0723, 0.067, 0.0933, 0.0866, 0.0451, 0.0256, 0.0061]
 risk_free_rate = 0.041
 
+# PORTFOLIO START DATE (hardcoded)
+PORTFOLIO_START_DATE = datetime(2025, 10, 10)
+
 # Fetch current prices
 st.subheader("📈 Current Holdings")
 
@@ -172,8 +175,11 @@ with st.spinner(f"Calculating {time_period.lower()} performance with dividends..
         end_date = datetime.now()
         desired_start_date = end_date - timedelta(days=days_back)
         
-        # Fetch data for selected period
-        month_data = yf.download(tickers, start=desired_start_date, end=end_date, progress=False, auto_adjust=False)
+        # Use the earlier of desired_start_date or PORTFOLIO_START_DATE for fetching
+        fetch_start_date = min(desired_start_date, PORTFOLIO_START_DATE)
+        
+        # Fetch data
+        month_data = yf.download(tickers, start=fetch_start_date, end=end_date, progress=False, auto_adjust=False)
         
         if 'Adj Close' in month_data.columns.levels[0] if isinstance(month_data.columns, pd.MultiIndex) else True:
             prices = month_data['Adj Close'] if isinstance(month_data.columns, pd.MultiIndex) else month_data
@@ -184,36 +190,30 @@ with st.spinner(f"Calculating {time_period.lower()} performance with dividends..
             prices = prices.to_frame()
             prices.columns = [tickers[0]]
         
+        # Filter to only include data from PORTFOLIO_START_DATE onwards
+        prices = prices[prices.index >= PORTFOLIO_START_DATE]
+        
         # Calculate daily portfolio value
         initial_investment = 10000
         
         # Get available tickers
         available_tickers = [t for t in tickers if t in prices.columns]
         
-        if len(available_tickers) == 0:
-            st.warning(f"⚠️ No data available for {time_period}. Portfolio may not have existed during this period.")
+        if len(available_tickers) == 0 or prices.empty:
+            st.warning(f"⚠️ No data available. Portfolio started on {PORTFOLIO_START_DATE.strftime('%Y-%m-%d')}.")
             
-            # Show empty graph with date range
+            # Show empty graph
             fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=[desired_start_date, end_date],
-                y=[initial_investment, initial_investment],
-                mode='lines',
-                line=dict(color='lightgray', dash='dash'),
-                name='No Data'
-            ))
             fig.update_layout(
                 title=f"Sharp Portfolio Value - {time_period} (No Data Available)",
                 xaxis_title="Date",
                 yaxis_title="Portfolio Value ($)",
-                height=500
+                height=500,
+                xaxis=dict(range=[desired_start_date, end_date])
             )
             st.plotly_chart(fig, use_container_width=True)
             
         else:
-            # Get actual data start date (portfolio start date)
-            actual_start_date = prices.index[0]
-            
             ticker_indices = [i for i, t in enumerate(tickers) if t in available_tickers]
             adjusted_weights = np.array([weights[i] for i in ticker_indices])
             adjusted_weights = adjusted_weights / adjusted_weights.sum()
@@ -226,7 +226,7 @@ with st.spinner(f"Calculating {time_period.lower()} performance with dividends..
                 try:
                     stock = yf.Ticker(ticker)
                     divs = stock.dividends
-                    divs_in_period = divs[(divs.index >= desired_start_date) & (divs.index <= end_date)]
+                    divs_in_period = divs[(divs.index >= PORTFOLIO_START_DATE) & (divs.index <= end_date)]
                     
                     price_returns = prices[ticker].pct_change().fillna(0)
                     total_returns = price_returns.copy()
@@ -275,11 +275,11 @@ with st.spinner(f"Calculating {time_period.lower()} performance with dividends..
                          f"{len(dividends_paid)} stocks" if dividends_paid else "None")
             
             # Show data availability info
-            if actual_start_date > desired_start_date:
-                days_diff = (actual_start_date - desired_start_date).days
-                st.info(f"ℹ️ Portfolio started on {actual_start_date.strftime('%Y-%m-%d')}. Showing {time_period} view with {days_diff} days before portfolio inception.")
+            if PORTFOLIO_START_DATE > desired_start_date:
+                days_diff = (PORTFOLIO_START_DATE - desired_start_date).days
+                st.info(f"ℹ️ Portfolio started on {PORTFOLIO_START_DATE.strftime('%Y-%m-%d')}. Showing {time_period} view with {days_diff} days before portfolio inception.")
             else:
-                st.caption(f"Period: {actual_start_date.strftime('%Y-%m-%d')} to {portfolio_value.index[-1].strftime('%Y-%m-%d')} ({len(portfolio_value)} trading days)")
+                st.caption(f"Period: {PORTFOLIO_START_DATE.strftime('%Y-%m-%d')} to {portfolio_value.index[-1].strftime('%Y-%m-%d')} ({len(portfolio_value)} trading days)")
             
             # Show dividend details
             if dividends_paid:
@@ -305,8 +305,7 @@ with st.spinner(f"Calculating {time_period.lower()} performance with dividends..
             with tab1:
                 fig = go.Figure()
                 
-                # Show ONLY actual portfolio performance from start date
-                # No line before portfolio inception - just empty space
+                # Show ONLY portfolio performance from PORTFOLIO_START_DATE
                 fig.add_trace(go.Scatter(
                     x=portfolio_value.index,
                     y=portfolio_value.values,
@@ -483,4 +482,4 @@ with st.spinner("Calculating Sharpe Ratio (fetching 5 years of data)..."):
 # Footer
 st.markdown("---")
 st.caption("Data from Yahoo Finance | Updated: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-st.caption("⚠️ Note: Dividend data may be incomplete for some funds. Total return calculation is an estimate.")
+st.caption(f"⚠️ Portfolio inception: {PORTFOLIO_START_DATE.strftime('%Y-%m-%d')} | Dividend data may be incomplete for some funds.")
